@@ -81,6 +81,25 @@ MUST NOT:
   that proposal; a new proposal is a new decision. This is deliberate: an agent that can retry until
   the checks pass is an agent optimising against the checks.
 
+## Known gaps — enumerated, not hidden
+
+The static checker is a **denylist over a reflective language**, which is inherently incomplete. The
+build deliberately hunted for its own bypasses; 58 adversarial cases are defeated and covered by
+tests, and these four get through. They are recorded as `strict=True` xfail tests, so the day one is
+closed the test fails loudly and forces this list to be updated:
+
+1. **A stdlib module that re-exports a denied module under a name not on the list.** You cannot
+   enumerate the unknown.
+2. **Third-party eval-capable libraries** (jinja2, `pandas.eval`, numexpr, sympy). Not denied because
+   narrowgate does not depend on them — but if your deployment has them installed, an approved tool
+   may import them.
+3. **Module-level `X = f()`** runs `f` at harness start. Timing, not capability: it still cannot
+   reach a denied name or import.
+4. **Library path-writers beyond the enumerated set**, e.g. `ElementTree.write(path)`.
+
+None of these are reachable without a human approving the tool first. That is the design, not a
+mitigation for these specific holes.
+
 ## Residual risk, stated plainly
 
 A human who approves without reading has defeated this entirely. The gate converts an invisible

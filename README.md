@@ -47,6 +47,11 @@ This does not sandbox approved code — once activated, a tool runs with the har
 control is human review, not containment, and the docs say so rather than implying a guarantee they
 cannot make.
 
+The static checker that guards activation is a denylist over a reflective language, so it is
+incomplete by construction. **Its four known bypasses are enumerated in
+[docs/SELF-EXTENSION.md](docs/SELF-EXTENSION.md#known-gaps--enumerated-not-hidden) and pinned by
+strict-xfail tests** — a security tool that hides its holes is worse than one that lists them.
+
 ## Status
 
 Early. Built 2026-09-11. Not yet run against a production workload.
