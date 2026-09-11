@@ -33,6 +33,10 @@ Known gaps, stated so nobody mistakes silence for coverage:
   environment has them installed, an approved tool may import them.
 * **Reads are unrestricted.** The spec only constrains write-mode ``open``. A tool may read any
   file the harness can read. This is by spec and is the operator's to judge.
+* **Library APIs that take a path and write to it** are enumerated, not derived: ``open`` (with
+  its mode) and the pathlib/gzip/logging/argparse names in ``_WRITE_ATTRS`` are covered;
+  ``xml.etree.ElementTree.ElementTree.write(path)`` and its cousins are not. The operator reads
+  the source; this list makes the common ones loud.
 * **Resource exhaustion** (``while True``, memory bombs, ReDoS via ``re``) is not checked.
 * **Module-level assignments** may call functions (``X = build()``) and so run at harness start;
   only allowed names can be reached, but they *do* run before any tool is dispatched.
@@ -72,17 +76,22 @@ SPEC_DENIED_MODULES: frozenset[str] = frozenset(
 #                    doctest, unittest (mock.patch imports by string), pdb/bdb/trace/profile
 #   object graphs  : inspect (frames), gc (get_referents), types (CodeType), pydoc (locate)
 #   serialisation  : pickle, marshal, shelve, dbm (arbitrary object construction)
-#   filesystem     : shutil, tempfile, fileinput (inplace), zipfile, tarfile, sqlite3, glob is fine
+#   filesystem     : shutil, tempfile, fileinput (inplace), zipfile, tarfile, sqlite3, mailbox,
+#                    compileall, py_compile (write anywhere); glob is fine (read-only)
+#   string-resolved: logging.config (dictConfig resolves "class": "os.system" and CALLS it),
+#                    site (addsitedir executes .pth files), ensurepip/venv/pip (spawn installers)
 #   C-level twins  : posix, nt, _thread, _posixsubprocess, _socket, _ctypes, _imp, _io, _pickle,
 #                    zipimport, pkgutil
+# Matching is by dotted prefix: "logging.config" denies "logging.config.x" but not "logging".
 EXTENDED_DENIED_MODULES: frozenset[str] = frozenset(
     {
         "sys", "runpy", "code", "codeop", "pty", "signal", "multiprocessing", "asyncio",
-        "webbrowser", "timeit", "doctest", "unittest", "pdb", "bdb", "trace", "profile",
-        "cProfile", "inspect", "gc", "types", "pydoc", "pickle", "marshal", "shelve", "dbm",
-        "shutil", "tempfile", "fileinput", "zipfile", "tarfile", "sqlite3", "posix", "nt",
-        "_thread", "_posixsubprocess", "_socket", "_ctypes", "_imp", "_io", "_pickle",
-        "zipimport", "pkgutil",
+        "webbrowser", "antigravity", "timeit", "doctest", "unittest", "pdb", "bdb", "trace",
+        "profile", "cProfile", "inspect", "gc", "types", "pydoc", "pickle", "marshal", "shelve",
+        "dbm", "shutil", "tempfile", "fileinput", "zipfile", "tarfile", "sqlite3", "mailbox",
+        "compileall", "py_compile", "logging.config", "site", "ensurepip", "venv", "pip",
+        "idlelib", "posix", "nt", "_thread", "_posixsubprocess", "_socket", "_ctypes", "_imp",
+        "_io", "_pickle", "zipimport", "pkgutil",
     }
 )  # fmt: skip
 DENIED_MODULES: frozenset[str] = SPEC_DENIED_MODULES | EXTENDED_DENIED_MODULES
@@ -93,7 +102,7 @@ NETWORK_MODULES: frozenset[str] = frozenset(
     {
         "urllib", "http", "httpx", "requests", "ftplib", "smtplib", "poplib", "imaplib",
         "telnetlib", "xmlrpc", "ssl", "socketserver", "aiohttp", "websocket", "websockets",
-        "nntplib", "email",
+        "nntplib", "logging.handlers",
     }
 )  # fmt: skip
 
@@ -101,7 +110,8 @@ NETWORK_MODULES: frozenset[str] = frozenset(
 FORBIDDEN_NAMES: frozenset[str] = frozenset(
     {
         "eval", "exec", "compile", "__import__", "globals", "locals", "vars", "breakpoint",
-        "__builtins__", "__loader__", "__spec__", "__build_class__", "memoryview",
+        "help", "input", "exit", "quit", "__builtins__", "__loader__", "__spec__",
+        "__build_class__", "memoryview",
     }
 )  # fmt: skip
 
@@ -114,23 +124,37 @@ _FRAME_ATTRS = {
     "f_globals", "f_locals", "f_builtins", "f_back", "f_code", "f_trace", "gi_frame", "gi_code",
     "cr_frame", "cr_code", "ag_frame", "ag_code", "tb_frame", "tb_next", "co_code", "co_consts",
 }  # fmt: skip
+# Path-taking constructors/functions that create or write files without a call named "open".
 _WRITE_ATTRS = {
     "write_text", "write_bytes", "unlink", "rmdir", "mkdir", "rename", "replace", "touch",
     "chmod", "symlink_to", "hardlink_to", "link_to", "rmtree", "remove", "removedirs",
-    "makedirs", "system", "popen", "FileHandler", "RotatingFileHandler",
-    "TimedRotatingFileHandler", "WatchedFileHandler",
+    "makedirs", "system", "popen", "FileType", "FileIO", "GzipFile", "BZ2File", "LZMAFile",
+    "basicConfig", "FileHandler", "RotatingFileHandler", "TimedRotatingFileHandler",
+    "WatchedFileHandler", "addsitedir",
 }  # fmt: skip
+# Handlers that open sockets from inside logging, invisible to the requires_network declaration.
+_NETWORK_ATTRS = {
+    "HTTPHandler", "SocketHandler", "DatagramHandler", "SMTPHandler", "SysLogHandler",
+}  # fmt: skip
+# String-driven reflection: attribute names passed as strings, type expressions evaluated from
+# strings, or module paths resolved from strings. The AST cannot see inside a string.
 _REFLECTION_ATTRS = {
     "attrgetter", "methodcaller", "get_type_hints", "get_annotations", "_eval_type",
-    "evaluate_forward_ref", "unsafe_load", "unsafe_load_all", "full_load", "full_load_all",
-    "UnsafeLoader", "FullLoader", "Loader", "CLoader", "CFullLoader", "CUnsafeLoader",
-    "locate", "_importer",
+    "evaluate_forward_ref", "_evaluate", "unsafe_load", "unsafe_load_all", "full_load",
+    "full_load_all", "UnsafeLoader", "FullLoader", "Loader", "CLoader", "CFullLoader",
+    "CUnsafeLoader", "locate", "_importer", "_resolve", "dictConfig", "fileConfig", "listen",
+    "resolve_name", "import_module", "create_model",
 }  # fmt: skip
+# Callables that accept a TYPE EXPRESSION and evaluate it if given as a string (pydantic
+# resolves forward references with eval in the caller's namespace). Allowed only with a
+# Name/Attribute/Subscript argument, i.e. a type written as code the checker can see.
+TYPE_EVALUATING_CALLS: frozenset[str] = frozenset({"TypeAdapter", "ForwardRef"})
 DENIED_ATTRS: frozenset[str] = frozenset(
     DENIED_MODULES
     | {f"_{m}" for m in DENIED_MODULES if not m.startswith("_")}
     | _FRAME_ATTRS
     | _WRITE_ATTRS
+    | _NETWORK_ATTRS
     | _REFLECTION_ATTRS
 )
 
@@ -201,8 +225,14 @@ def _is_dunder(ident: str) -> bool:
     return len(ident) > 4 and ident.startswith("__") and ident.endswith("__")
 
 
-def _top_module(dotted: str) -> str:
-    return dotted.split(".", 1)[0]
+def _prefixes(dotted: str) -> list[str]:
+    """``"a.b.c"`` -> ``["a", "a.b", "a.b.c"]``."""
+    parts = dotted.split(".")
+    return [".".join(parts[: i + 1]) for i in range(len(parts))]
+
+
+def _matches(dotted: str, modules: frozenset[str]) -> bool:
+    return any(prefix in modules for prefix in _prefixes(dotted))
 
 
 def _literal_str(node: ast.expr | None) -> str | None:
@@ -227,11 +257,10 @@ class _Checker(ast.NodeVisitor):
         src = self.lines[line - 1].rstrip() if 0 < line <= len(self.lines) else "<no source>"
         self.violations.append(Violation(line=line, reason=reason, source=src))
 
-    def _check_module_name(self, node: ast.AST, dotted: str) -> None:
-        top = _top_module(dotted)
-        if top in DENIED_MODULES:
+    def _check_module_name(self, node: ast.stmt, dotted: str) -> None:
+        if _matches(dotted, DENIED_MODULES):
             self.fail(node, f"import of denied module '{dotted}'")
-        elif top in NETWORK_MODULES:
+        elif _matches(dotted, NETWORK_MODULES):
             self.imported_network_modules.append((node.lineno, dotted))
 
     def _check_literal_attr_name(self, node: ast.Call, arg: ast.expr | None, what: str) -> bool:
@@ -261,10 +290,10 @@ class _Checker(ast.NodeVisitor):
         for alias in node.names:
             if alias.name == "*":
                 self.fail(node, "star import (imported names cannot be reviewed)")
-            elif _top_module(alias.name) in DENIED_MODULES and node.module in {
-                "narrowgate", "narrowgate.tools"
-            }:
-                # from narrowgate import os  — pointless but cheap to refuse.
+            elif f"{node.module}.{alias.name}" in DENIED_MODULES:
+                self.fail(node, f"import of denied module '{node.module}.{alias.name}'")
+            elif alias.name in DENIED_ATTRS or _is_dunder(alias.name):
+                # from logging import config / from typing import get_type_hints
                 self.fail(node, f"import of denied name '{alias.name}'")
 
     # names and attributes
@@ -304,16 +333,22 @@ class _Checker(ast.NodeVisitor):
             elif func.id == "open":
                 self._check_open(node, is_method=False)
                 handled_func = True
+            elif func.id in TYPE_EVALUATING_CALLS:
+                self._check_type_arg(node, func.id)
         elif isinstance(func, ast.Attribute):
-            if func.attr == "open" and not _is_dunder(func.attr):
+            if func.attr == "open":
                 self._check_open(node, is_method=True)
                 # still check the receiver chain (e.g. pathlib.os.open)
                 self.visit(func.value)
                 handled_func = True
-            elif func.attr == "load" and isinstance(func.value, ast.Name) and (
-                func.value.id == "yaml"
+            elif (
+                func.attr == "load"
+                and isinstance(func.value, ast.Name)
+                and (func.value.id == "yaml")
             ):
                 self.fail(node, "yaml.load() can construct arbitrary objects; use yaml.safe_load")
+            elif func.attr in TYPE_EVALUATING_CALLS:
+                self._check_type_arg(node, func.attr)
 
         if not handled_func:
             self.visit(func)
@@ -321,6 +356,12 @@ class _Checker(ast.NodeVisitor):
             self.visit(arg)
         for kw in node.keywords:
             self.visit(kw.value)
+
+    def _check_type_arg(self, node: ast.Call, what: str) -> None:
+        """``TypeAdapter("...")`` evaluates its string; only a type written as code is allowed."""
+        first = node.args[0] if node.args else None
+        if first is None or not isinstance(first, ast.Name | ast.Attribute | ast.Subscript):
+            self.fail(node, f"{what}() with a non-type argument (strings are evaluated)")
 
     def _check_open(self, node: ast.Call, *, is_method: bool) -> None:
         """Refuse write-mode opens unless the target is a literal path under the workspace root.
@@ -335,7 +376,10 @@ class _Checker(ast.NodeVisitor):
             self.fail(node, "open() with *args/**kwargs (mode cannot be reviewed)")
             return
         kwargs = {kw.arg: kw.value for kw in node.keywords}
-        mode_node = node.args[1] if len(node.args) > 1 else kwargs.get("mode")
+        # builtin: open(file, mode, ...) -> mode is positional arg 1.
+        # method:  path.open(mode, ...)  -> mode is positional arg 0 (path is the receiver).
+        mode_pos = 0 if is_method else 1
+        mode_node = node.args[mode_pos] if len(node.args) > mode_pos else kwargs.get("mode")
         if mode_node is None:
             return  # default mode is 'r'
         mode = _literal_str(mode_node)
@@ -564,8 +608,9 @@ def activate(
             name=name,
             sha256=digest,
             reviewer=approver,
-            violations=[{"line": v.line, "reason": v.reason, "source": v.source}
-                        for v in violations],  # fmt: skip
+            violations=[
+                {"line": v.line, "reason": v.reason, "source": v.source} for v in violations
+            ],  # fmt: skip
         )
         raise ActivationRejected(name, violations)
 
@@ -634,13 +679,15 @@ def main(argv: Iterable[str] | None = None) -> int:
     import argparse
 
     from narrowgate.audit import AuditLog
+    from narrowgate.config import ConfigError, load_config
 
     parser = argparse.ArgumentParser(prog="narrowgate activate")
     parser.add_argument("name", help="staged tool name (tools_staged/<name>.py)")
+    parser.add_argument("--config", default="config.yaml", help="source of workspace/audit paths")
     parser.add_argument("--staged-dir", type=Path, default=DEFAULT_STAGED_DIR)
     parser.add_argument("--enabled-dir", type=Path, default=DEFAULT_ENABLED_DIR)
-    parser.add_argument("--workspace-root", type=Path, default=Path("workspace"))
-    parser.add_argument("--audit", type=Path, default=Path("audit/narrowgate.jsonl"))
+    parser.add_argument("--workspace-root", type=Path, help="overrides config workspace.root")
+    parser.add_argument("--audit", type=Path, help="overrides config audit.path")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     if not sys.stdin.isatty():
@@ -648,14 +695,24 @@ def main(argv: Iterable[str] | None = None) -> int:
               "from a pipe.", file=sys.stderr)  # fmt: skip
         return 4
 
+    workspace_root, audit_path = args.workspace_root, args.audit
+    if workspace_root is None or audit_path is None:
+        try:
+            cfg = load_config(args.config)
+        except ConfigError as exc:
+            print(f"aborted: {exc}", file=sys.stderr)
+            return 4
+        workspace_root = workspace_root or cfg.workspace.root
+        audit_path = audit_path or cfg.audit.path
+
     try:
         activate(
             args.name,
             staged_dir=args.staged_dir,
             enabled_dir=args.enabled_dir,
-            workspace_root=args.workspace_root,
+            workspace_root=workspace_root,
             confirm=input,
-            audit=AuditLog(args.audit),
+            audit=AuditLog(audit_path),
         )
     except ActivationRejected:
         return 2
