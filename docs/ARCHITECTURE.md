@@ -110,3 +110,46 @@ Pin exact versions. Every dependency added must be justified in the PR.
 - Unit tests covering the **failure** branches, not just the happy path
 - No network calls in tests
 - Docstring on every public function stating what it refuses to do
+
+---
+
+## Decisions taken during the first build
+
+Recorded here so they are not re-argued from scratch later. Each was raised by an implementer
+because the contract was silent.
+
+### `finish_reason` is NOT used to judge tool-call support — lenient, deliberately
+
+`probe_tool_calls` reports `native=True` when `choices[0].message.tool_calls[0]` is well-formed,
+**even if `finish_reason` is `"stop"` rather than `"tool_calls"`.** Older vLLM builds return `"stop"`
+alongside a perfectly valid array.
+
+Strictness here would produce **false NOT-USABLE verdicts on working setups**, and a false negative
+is the worse error: it sends an operator chasing a `--tool-call-parser` they do not need, and the
+fix for "it says broken but works" is much less obvious than "it says working but is broken." The
+`finish_reason` is reported in `detail` so a human can see it.
+
+### `specs()` omits network tools the operator has not allowed
+
+The model is never shown a capability that `dispatch` would refuse. Advertise-and-refuse would teach
+it to plan around a tool it cannot use and then fail mid-task; omitting is quieter and truthful — the
+tool genuinely is not available in this configuration.
+
+### Every symlink under the workspace root is refused, not only escaping ones
+
+This kills the check-then-open race class outright rather than trying to win it. It costs nothing in
+a normal workspace and removes a whole category of subtle bug. Revisit only with a concrete need.
+
+### No `make_dir`, and `write_file` does not create parents
+
+The agent can only write into directories that already exist. This is a deliberate narrowing, not an
+oversight: directory creation is a capability, and every capability has to justify itself. Nothing in
+the current design needs it — `propose_tool` writes to a fixed staged directory. Add it when a real
+task is blocked by its absence, not in anticipation.
+
+### The registry does not import `config`
+
+`Registry(network_allow_tools=...)` and the built-ins take plain values. Wiring lives in `cli.py`.
+Keeps the boundary layer testable without constructing a full config, and keeps `tools/base.py` free
+of `narrowgate` imports — which matters, because `config.py` imports `TOOL_NAME_PATTERN` from it and
+a cycle would be easy to create by accident.
