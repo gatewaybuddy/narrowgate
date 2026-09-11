@@ -3,7 +3,11 @@
 llm:
   base_url: "http://localhost:8001/v1"   # vLLM OpenAI-compatible endpoint
   model: "nemotron-lightning"
-  api_key_env: "NARROWGATE_API_KEY"      # name of the env var, not the key
+  # Name of an env var holding the key — NEVER the key itself.
+  # null is correct for a local vLLM with no auth, which is the common case on an
+  # isolated box. Set it only if your endpoint actually requires a key; if you name
+  # a var here it MUST be set, or startup fails closed rather than sending nothing.
+  api_key_env: null
   timeout_s: 120
   max_tokens: 4096
 

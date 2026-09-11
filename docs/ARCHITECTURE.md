@@ -87,7 +87,12 @@ class ToolCallSupport:
     parser_hint: str | None
     detail: str
 
-def probe_tool_calls(base_url: str, model: str) -> ToolCallSupport: ...
+def probe_tool_calls(
+    base_url: str, model: str, *,
+    api_key: str | None = None,
+    timeout_s: float = 60,
+    transport=None,          # test seam; never set in production
+) -> ToolCallSupport: ...
 ```
 
 ⭐ **`probe_tool_calls` is load-bearing.** Whether Nemotron emits well-formed OpenAI `tool_calls`
