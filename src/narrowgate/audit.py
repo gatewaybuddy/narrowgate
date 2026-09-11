@@ -11,6 +11,7 @@ What this module refuses to do:
   failure is printed loudly to stderr and counted in :attr:`AuditLog.failures`, and the harness
   keeps running. Silently losing an audit record is the one failure mode we cannot tolerate, so
   the failure is never silent; but a broken audit sink must not become a denial of service.
+* It never logs tool output content, only its length; inputs are logged verbatim.
 * It never truncates or rewrites the file. The file is opened with ``O_APPEND`` for every write.
 """
 
@@ -21,8 +22,12 @@ import json
 import os
 import sys
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from narrowgate.tools.base import ToolResult
 
 __all__ = ["AuditLog", "new_session_id"]
 
@@ -46,6 +51,7 @@ class AuditLog:
     def __init__(self, path: str | Path) -> None:
         self._path = Path(path)
         self._failures = 0
+        self._open: dict[tuple[str | None, str], str] = {}
 
     @property
     def path(self) -> Path:
@@ -58,45 +64,77 @@ class AuditLog:
         return self._failures
 
     # -- public API ---------------------------------------------------------------------------
+    #
+    # before_call / after_call satisfy the ``narrowgate.tools.base.Audit`` protocol the registry
+    # dispatches through (keyword-only; ``args`` is whatever the model sent, logged verbatim).
 
-    def before_call(self, session_id: str, tool: str, arguments: dict[str, Any]) -> str:
-        """Record that ``tool`` is about to run with ``arguments``. Returns a ``call_id``.
+    def before_call(self, *, tool: str, args: Mapping[str, Any], session: str | None) -> str:
+        """Record that ``tool`` is about to run with ``args``. Returns the new ``call_id``.
 
         Refuses to raise. Refuses to redact: the arguments are logged as given, because a record
-        that hides what the tool was asked to do is not an audit record.
+        that hides what the tool was asked to do is not an audit record. The returned id is also
+        remembered so the matching :meth:`after_call` can pair with it without the caller
+        threading it through (single agent loop; last-issued id per ``(session, tool)`` wins).
         """
         call_id = uuid.uuid4().hex
+        self._open[(session, tool)] = call_id
         self.write(
             {
                 "event": "tool_call.before",
-                "session_id": session_id,
+                "session_id": session,
                 "call_id": call_id,
                 "tool": tool,
-                "arguments": arguments,
+                "arguments": dict(args),
             }
         )
         return call_id
 
     def after_call(
         self,
-        session_id: str,
-        tool: str,
-        call_id: str,
         *,
-        ok: bool,
-        error: str | None = None,
-        content_len: int | None = None,
+        tool: str,
+        args: Mapping[str, Any],
+        session: str | None,
+        result: ToolResult,
+        call_id: str | None = None,
     ) -> None:
-        """Record the outcome of the call started by :meth:`before_call`. Refuses to raise."""
+        """Record the outcome of the call started by :meth:`before_call`. Refuses to raise.
+
+        ``result`` needs only ``ok``, ``error`` and ``content`` attributes (``ToolResult``).
+        Content itself is not logged — its length is — so a large file read does not bloat the
+        audit file; the arguments that produced it are already on the ``before`` record.
+        """
+        if call_id is None:
+            call_id = self._open.pop((session, tool), None)
+        else:
+            self._open.pop((session, tool), None)
+        try:
+            ok = bool(result.ok)
+            error = result.error
+            content_len = len(result.content) if result.content is not None else None
+        except Exception as exc:  # noqa: BLE001 — a bad result object still gets a record
+            ok, error, content_len = False, f"unreadable result: {exc!r}", None
         self.write(
             {
                 "event": "tool_call.after",
-                "session_id": session_id,
+                "session_id": session,
                 "call_id": call_id,
                 "tool": tool,
+                "arguments": dict(args),
                 "outcome": {"ok": ok, "error": error, "content_len": content_len},
             }
         )
+
+    def record(self, event: str, /, **fields: Any) -> bool:
+        """Append a free-form record such as ``tool_proposed`` or ``tool_activated``.
+
+        Refuses to raise and refuses to accept ``ts`` or ``event`` as field names (they are
+        set by the log, not the caller — overriding them would let a record misdescribe itself).
+        Returns ``False`` if the record could not be written.
+        """
+        if "ts" in fields or "event" in fields:
+            return self.write({"event": event, "_rejected_fields": sorted(fields)})
+        return self.write({"event": event, **fields})
 
     def write(self, record: dict[str, Any]) -> bool:
         """Append one record (a ``ts`` field is added). Returns ``True`` on success.

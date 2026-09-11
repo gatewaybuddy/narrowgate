@@ -25,6 +25,8 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from narrowgate.tools.base import TOOL_NAME_PATTERN
+
 __all__ = [
     "AgentConfig",
     "AuditConfig",
@@ -38,9 +40,8 @@ __all__ = [
     "resolve_api_key",
 ]
 
-# Same pattern as ``Tool.name`` in the architecture contract. Kept here so config validation and
-# registry validation cannot drift apart on what a "tool name" is.
-TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
+# The registry's definition of a tool name is the only definition: import it, never copy it.
+TOOL_NAME_RE = TOOL_NAME_PATTERN
 
 _ENV_NAME_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 
