@@ -64,10 +64,24 @@ than guessing — if your model needs a `--tool-call-parser`, you will be told w
 
 ```bash
 pip install -e .
-cp config.example.yaml config.yaml     # edit: base_url, model, workspace_root
-python -m narrowgate.preflight         # probe the endpoint before anything else
-python -m narrowgate                   # start the agent loop
+cp config.example.yaml config.yaml     # edit: base_url, model
+narrowgate preflight                   # probe the endpoint BEFORE anything else
+narrowgate                             # start the agent loop
 ```
+
+Run `preflight` first. It answers "does this model actually emit tool calls?" in about 30 seconds
+and, if not, names the `--tool-call-parser` to try — rather than letting you discover it mid-session.
+
+To run the tests, install the dev extra:
+
+```bash
+pip install -e ".[dev]"
+pytest -q
+```
+
+**Exit codes** (checked, so you can gate on them): `preflight` 0 usable · 1 not usable · 2 config
+rejected. `activate` is non-zero on every refusal, including a non-interactive stdin — it will not
+read a confirmation from a pipe, so the human gate cannot be scripted past.
 
 ## Docs
 
