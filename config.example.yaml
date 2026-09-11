@@ -1,0 +1,25 @@
+# narrowgate config — REFERENCES ONLY. Never put a secret value in this file.
+
+llm:
+  base_url: "http://localhost:8001/v1"   # vLLM OpenAI-compatible endpoint
+  model: "nemotron-lightning"
+  api_key_env: "NARROWGATE_API_KEY"      # name of the env var, not the key
+  timeout_s: 120
+  max_tokens: 4096
+
+workspace:
+  root: "./workspace"        # every file tool is confined to this directory
+  max_file_bytes: 1048576
+
+network:
+  # Deny-by-default. A tool declaring requires_network=True still cannot run
+  # unless its name appears here. Empty list = no tool may touch the network.
+  allow_tools: []
+
+audit:
+  path: "./audit/narrowgate.jsonl"   # append-only; cannot be disabled
+
+agent:
+  max_turns: 24
+  # Refuse to start if the endpoint does not emit well-formed tool_calls.
+  require_native_tool_calls: true

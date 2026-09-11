@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+config.yaml
+audit/
+tools_staged/*.py
+!tools_staged/.gitkeep
+src/narrowgate/tools/enabled/*.py
+!src/narrowgate/tools/enabled/.gitkeep
